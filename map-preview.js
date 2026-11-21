@@ -41,9 +41,10 @@ const detailLevels = [
   { density: 8, size: 128, minScale: 2.7 }
 ];
 const detailTiles = new Map();
+const pendingDetailTiles = new Map();
 let visibleDetailTiles = [];
-let visibleDetailIds = new Set();
-let loadingDetailTiles = 0;
+let priorityTileId = null;
+let detailStartTimer = 0;
 const pointers = new Map();
 const activeTypes = new Set(Object.keys(categories));
 const storageKey = 'gta6-guides:leonida-mapgenie:v1';
@@ -77,6 +78,7 @@ let shown = pageSize;
 const width = () => atlasWidth * fit * zoom;
 const height = () => atlasHeight * fit * zoom;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const clampOffset = (value, excess) => clamp(value, Math.min(0, excess), Math.max(0, excess));
 const normalize = value => value.normalize('NFD').replace(/\p{Diacritic}|['’]/gu, '').toLowerCase().trim();
 
 function saveProgress() {
@@ -86,10 +88,8 @@ function saveProgress() {
 }
 
 function keepInsideMap() {
-  const limitX = frameWidth - width();
-  const limitY = frameHeight - height();
-  left = clamp(left, Math.min(0, limitX), Math.max(0, limitX));
-  top = clamp(top, Math.min(0, limitY), Math.max(0, limitY));
+  left = clampOffset(left, frameWidth - width());
+  top = clampOffset(top, frameHeight - height());
 }
 
 function positionDetails() {
@@ -170,7 +170,16 @@ function animateZoom(nextZoom, x = frameWidth / 2, y = frameHeight / 2) {
     return;
   }
   const began = performance.now();
+  let preload = zoomTarget > start;
   const frame = time => {
+    if (preload) {
+      preload = false;
+      const targetWidth = atlasWidth * fit * zoomTarget;
+      const targetHeight = atlasHeight * fit * zoomTarget;
+      drawDetailTiles(fit * zoomTarget,
+        clampOffset(x - anchorX * targetWidth, frameWidth - targetWidth),
+        clampOffset(y - anchorY * targetHeight, frameHeight - targetHeight));
+    }
     const fraction = clamp((time - began) / 165, 0, 1);
     const ease = 1 - (1 - fraction) ** 3;
     zoom = fraction === 1 ? zoomTarget : start * (zoomTarget / start) ** ease;
@@ -218,22 +227,15 @@ function placeControl(record, className) {
   return button;
 }
 
-function trimDetailCache() {
-  for (const [id, tile] of detailTiles) {
-    if (visibleDetailIds.has(id)) continue;
-    tile.remove();
-    if (tile.complete && (tile.hidden || detailTiles.size > 32)) detailTiles.delete(id);
-  }
-}
-
-function loadVisibleDetailTiles() {
-  for (const { id, x, y, size, density } of visibleDetailTiles) {
-    const cached = detailTiles.get(id);
-    if (cached) {
-      if (!cached.isConnected) detailLayer.append(cached);
-      continue;
-    }
-    if (loadingDetailTiles >= 4) continue;
+async function loadDetailTile({ id, x, y, size, density }, priority) {
+  const controller = new AbortController();
+  pendingDetailTiles.set(id, controller);
+  let objectUrl;
+  try {
+    const response = await fetch(detailLayer.dataset.src + id + '.webp', { signal: controller.signal, priority });
+    if (!response.ok) throw new Error('Map tile unavailable');
+    const blob = await response.blob();
+    if (controller.signal.aborted) return;
     const tile = document.createElement('img');
     tile.alt = '';
     tile.draggable = false;
@@ -244,45 +246,94 @@ function loadVisibleDetailTiles() {
     tile.style.top = y / atlasHeight * 100 + '%';
     tile.style.width = Math.min(size, atlasWidth - x) / atlasWidth * 100 + '%';
     tile.style.height = Math.min(size, atlasHeight - y) / atlasHeight * 100 + '%';
-    const settle = event => {
-      loadingDetailTiles -= 1;
-      tile.hidden = event.type === 'error';
-      tile.toggleAttribute('data-loaded', !tile.hidden);
-      trimDetailCache();
-      loadVisibleDetailTiles();
-    };
-    tile.addEventListener('load', settle, { once: true });
-    tile.addEventListener('error', settle, { once: true });
-    loadingDetailTiles += 1;
+    objectUrl = URL.createObjectURL(blob);
+    tile.src = objectUrl;
+    await tile.decode();
+    if (controller.signal.aborted) return;
+    tile.setAttribute('data-loaded', '');
     detailTiles.set(id, tile);
     detailLayer.append(tile);
-    tile.src = detailLayer.dataset.src + id + '.webp';
+  } catch {
+    // Keep the overview visible on failure. Retry the tile on a later visit.
+    if (!controller.signal.aborted) detailTiles.set(id, null);
+  } finally {
+    if (objectUrl && detailTiles.get(id)?.src !== objectUrl) URL.revokeObjectURL(objectUrl);
+    if (pendingDetailTiles.get(id) === controller) {
+      pendingDetailTiles.delete(id);
+      loadVisibleDetailTiles();
+    }
   }
 }
 
-function drawDetailTiles() {
-  const scale = fit * zoom;
-  const screenDensity = scale * Math.min(devicePixelRatio, 1.5);
+function loadVisibleDetailTiles() {
+  const center = visibleDetailTiles[0];
+  if (!center) return;
+  if (!detailTiles.has(center.id) && !pendingDetailTiles.has(center.id) && pendingDetailTiles.size < 4) {
+    loadDetailTile(center, 'high');
+    priorityTileId = center.id;
+    clearTimeout(detailStartTimer);
+    detailStartTimer = setTimeout(() => {
+      priorityTileId = null;
+      loadVisibleDetailTiles();
+    }, 160);
+  }
+  if (priorityTileId === center.id && !detailTiles.has(center.id)) return;
+
+  for (const tile of visibleDetailTiles) {
+    if (pendingDetailTiles.size >= 4) break;
+    if (detailTiles.has(tile.id) || pendingDetailTiles.has(tile.id)) continue;
+    loadDetailTile(tile, 'low');
+  }
+}
+
+function tilesInView({ density, size }, scale, viewLeft, viewTop) {
+  const screenTile = size * scale;
   const visible = [];
-  for (const { density, size, minScale } of detailLevels) {
-    if (screenDensity < minScale) continue;
-    const screenTile = size * scale;
-    const firstCol = Math.max(0, Math.floor(-left / screenTile));
-    const firstRow = Math.max(0, Math.floor(-top / screenTile));
-    const lastCol = Math.min(Math.ceil(atlasWidth / size) - 1, Math.floor((frameWidth - left) / screenTile));
-    const lastRow = Math.min(Math.ceil(atlasHeight / size) - 1, Math.floor((frameHeight - top) / screenTile));
-    for (let row = firstRow; row <= lastRow; row++) {
-      for (let col = firstCol; col <= lastCol; col++) {
-        const centerX = left + (col + .5) * screenTile - frameWidth / 2;
-        const centerY = top + (row + .5) * screenTile - frameHeight / 2;
-        const id = density + '-' + col + '-' + row;
-        visible.push({ id, density, size, x: col * size, y: row * size, distance: Math.hypot(centerX, centerY) });
-      }
+  const firstCol = Math.max(0, Math.floor(-viewLeft / screenTile));
+  const firstRow = Math.max(0, Math.floor(-viewTop / screenTile));
+  const lastCol = Math.ceil(Math.min(atlasWidth / size, (frameWidth - viewLeft) / screenTile)) - 1;
+  const lastRow = Math.ceil(Math.min(atlasHeight / size, (frameHeight - viewTop) / screenTile)) - 1;
+  for (let row = firstRow; row <= lastRow; row++) {
+    for (let col = firstCol; col <= lastCol; col++) {
+      const x = col * size;
+      const y = row * size;
+      const centerX = viewLeft + (x + Math.min(size, atlasWidth - x) / 2) * scale - frameWidth / 2;
+      const centerY = viewTop + (y + Math.min(size, atlasHeight - y) / 2) * scale - frameHeight / 2;
+      visible.push({ id: `${density}-${col}-${row}`, density, size, x, y, distance: Math.hypot(centerX, centerY) });
     }
   }
-  visibleDetailTiles = visible.sort((a, b) => a.distance - b.distance);
-  visibleDetailIds = new Set(visible.map(tile => tile.id));
-  trimDetailCache();
+  return visible;
+}
+
+function drawDetailTiles(scale = fit * zoom, viewLeft = left, viewTop = top) {
+  if (!frameWidth || !frameHeight) return;
+  const screenDensity = scale * Math.min(devicePixelRatio, 1.5);
+  const level = detailLevels.findLast(detail => screenDensity >= detail.minScale);
+  visibleDetailTiles = level ? tilesInView(level, scale, viewLeft, viewTop) : [];
+  visibleDetailTiles.sort((a, b) => a.distance - b.distance);
+  const requested = new Set(visibleDetailTiles.map(tile => tile.id));
+  for (const [id, controller] of pendingDetailTiles) {
+    if (requested.has(id)) continue;
+    pendingDetailTiles.delete(id);
+    controller.abort();
+  }
+
+  // Previously loaded medium-resolution tiles can cover the overview while HD tiles arrive.
+  const displayed = new Set(requested);
+  if (level === detailLevels[1]) {
+    for (const { id } of tilesInView(detailLevels[0], scale, viewLeft, viewTop)) displayed.add(id);
+  }
+  for (const [id, tile] of detailTiles) {
+    if (displayed.has(id)) {
+      if (tile && !tile.isConnected) detailLayer.append(tile);
+      continue;
+    }
+    tile?.remove();
+    if (!tile || detailTiles.size > 32) {
+      if (tile) URL.revokeObjectURL(tile.src);
+      detailTiles.delete(id);
+    }
+  }
   loadVisibleDetailTiles();
 }
 
@@ -603,6 +654,8 @@ function startDragging() {
   viewport.classList.add('is-dragging');
   for (const id of pointers.keys()) viewport.setPointerCapture(id);
 }
+
+viewport.addEventListener('dragstart', event => event.preventDefault());
 
 viewport.addEventListener('pointerdown', event => {
   if (event.button !== 0 || pointers.size === 2) return;

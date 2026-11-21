@@ -227,7 +227,6 @@ li + li { margin-top: .45em; }
 .related-guides { margin-top: 2.15rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .related-guides h2 { font-size: 1.45rem; }
 .related-guides ul { padding-inline-start: 1.3rem; }
-.screenshot-references .shot-credit { color: var(--muted); font-size: .86rem; }
 .article-head h1 { max-width: 19ch; }
 .article-body { margin-top: clamp(1.35rem, 3.5vw, 2.25rem); }
 .article-body > h2:not(:first-child), .article-body > section:not(:first-child) { margin-top: 2rem; }
@@ -235,6 +234,7 @@ li + li { margin-top: .45em; }
 .steps-with-shot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 19rem); align-items: start; gap: 1rem 1.5rem; }
 .steps-with-shot ol { margin-block: .45rem 0; }
 .guide-shot { width: 100%; max-width: 25rem; margin: 0; padding: .55rem; background: var(--panel); border: 1px solid var(--line); }
+.inline-step-shot { max-width: 48rem; margin: .8rem 0 1.2rem; }
 .guide-shot a { color: var(--mint); }
 .guide-shot img { display: block; width: 100%; height: auto; }
 .guide-shot figcaption { margin: .55rem .25rem .15rem; color: var(--muted); font-size: .88rem; line-height: 1.5; }
