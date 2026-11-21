@@ -8,10 +8,13 @@
   const { resultLimit, resultsLabel, noMatches } = lookup.dataset;
   const limit = Number(resultLimit);
   const onDirectory = !lookup.classList.contains('hero-lookup');
+  const isTurkish = /^tr(?:-|$)/i.test(document.documentElement.lang);
   const commonWords = new Set(['a', 'an', 'and', 'can', 'do', 'does', 'for', 'how', 'i', 'in', 'is', 'my', 'on', 'the', 'to', 'what', 'where']);
 
   function normalize(text) {
-    return text.toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const lower = text.toLowerCase();
+    const searchable = isTurkish ? lower.replaceAll('ı', 'i') : lower;
+    return searchable.normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   }
 
   const indexed = entries.map(entry => ({
@@ -33,12 +36,15 @@
       status.textContent = noMatches ?? 'Enter a mission, item, location or error.';
       return;
     }
+    const phrase = words.join(' ');
     const ranked = indexed
       .filter(entry => words.every(word => entry.text.includes(word)))
-      .map(entry => ({
-        entry,
-        rank: (entry.name === query ? 16 : 0) + words.filter(word => entry.name.includes(word)).length
-      }))
+      .map(entry => {
+        const exactTitle = entry.name === query ? 16 : 0;
+        const titleMatches = words.filter(word => entry.name.includes(word)).length;
+        const phraseMatch = isTurkish && words.length > 1 && entry.text.includes(phrase) ? 2 : 0;
+        return { entry, rank: exactTitle + titleMatches + phraseMatch };
+      })
       .sort((left, right) => right.rank - left.rank);
     const sectionPages = new Set(ranked.filter(({ entry }) => entry.href.includes('#')).map(({ entry }) => entry.href.split('#')[0]));
     const matches = ranked.filter(({ entry }) => !sectionPages.has(entry.href));
