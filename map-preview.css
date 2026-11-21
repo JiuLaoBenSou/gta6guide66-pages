@@ -115,6 +115,3 @@
   .map-expanded .map-results { max-height: 8rem; }
   .map-results { max-height: 20rem; padding-inline: .7rem; }
 }
-
-.map-preview-note{margin:-.55rem 0 .8rem;color:var(--muted);font-size:.8rem}
-.map-case-source{color:var(--mint)}

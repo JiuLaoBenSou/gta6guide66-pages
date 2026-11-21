@@ -15,6 +15,8 @@ const share = details.querySelector('[data-map-share]');
 const shareUrl = details.querySelector('.map-share-url');
 const visitFilter = map.querySelector('[data-map-visit]');
 const countyFilter = map.querySelector('[data-map-county]');
+const borderToggle = map.querySelector('[data-map-borders]');
+const boundaries = map.querySelector('.map-boundaries');
 const presetSelect = map.querySelector('[data-map-preset]');
 const presetName = map.querySelector('[data-map-filter-name]');
 const removePreset = map.querySelector('[data-map-remove-filter]');
@@ -36,7 +38,7 @@ const atlasWidth = Number(raster.getAttribute('width'));
 const atlasHeight = Number(raster.getAttribute('height'));
 const detailLevels = [
   { density: 2, size: 384, minScale: .85 },
-  { density: 4, size: 128, minScale: 2.1 }
+  { density: 8, size: 128, minScale: 2.7 }
 ];
 const detailTiles = new Map();
 let visibleDetailTiles = [];
@@ -44,7 +46,7 @@ let visibleDetailIds = new Set();
 let loadingDetailTiles = 0;
 const pointers = new Map();
 const activeTypes = new Set(Object.keys(categories));
-const storageKey = 'gta6-guides:leonida-mapheist:v1';
+const storageKey = 'gta6-guides:leonida-mapgenie:v1';
 
 let stored;
 try { stored = JSON.parse(localStorage.getItem(storageKey)); } catch { /* Storage can be blocked. */ }
@@ -376,7 +378,7 @@ function showPlace(record) {
   details.querySelector('.map-detail-icon').replaceChildren(markerIcon(record.icon));
   details.querySelector('.map-area').textContent = record.area;
   details.querySelector('.map-place-category').textContent = categories[record.category];
-  details.querySelector('.map-case-source').href = record.source;
+  details.querySelector('.map-uncertain').hidden = !record.unconfirmed;
   details.querySelector('.map-notes').open = false;
   complete.checked = visited.has(record.id);
   note.value = notes.get(record.id) ?? '';
@@ -451,6 +453,10 @@ query.addEventListener('keydown', event => {
 });
 visitFilter.addEventListener('change', () => updateResults());
 countyFilter.addEventListener('change', () => updateResults());
+borderToggle.addEventListener('change', () => {
+  if (borderToggle.checked && !boundaries.hasAttribute('src')) boundaries.src = boundaries.dataset.src;
+  boundaries.hidden = !borderToggle.checked;
+});
 presetSelect.addEventListener('change', () => {
   const preset = presets.get(presetSelect.value);
   removePreset.disabled = !preset;
@@ -676,10 +682,11 @@ async function loadLandmarks() {
     const response = await fetch(map.dataset.landmarks);
     if (!response.ok) throw new Error('HTTP ' + response.status);
     const data = await response.json();
-    records = data.map(([id, name, category, icon, x, y, county, source]) => {
+    records = data.map(([id, name, category, icon, x, y, county]) => {
       const area = countyFilter.options[county]?.textContent ?? '';
       const countyName = county ? area : '';
-      return { id, name, area: countyName, category, icon, x, y, county, source,
+      return { id, name, area: countyName, category, icon, x, y, county,
+        unconfirmed: name.endsWith('?'),
         search: normalize([name, countyName, categories[category]].join(' ')), searchName: normalize(name) };
     });
     byId = new Map(records.map(record => [record.id, record]));
