@@ -61,6 +61,10 @@ a:hover { text-decoration-thickness: 2px; }
 h1, h2, h3 { margin-block: 0 .45em; font: 400 2rem/1.08 var(--display); letter-spacing: .018em; }
 h1 { font-size: clamp(2.5rem, 6.5vw, 5.2rem); text-transform: uppercase; }
 h3 { font-size: 1.45rem; }
+html:is(:lang(ja), :lang(zh)) :is(.article-head h1, .article-body h2, .home-hero h1, .home-popular h2, .popular-card h3, .home-quick h2) {
+  font-weight: 800;
+  line-height: 1.16;
+}
 p, li { overflow-wrap: break-word; }
 p { margin: 0 0 1em; }
 li + li { margin-top: .45em; }
@@ -228,6 +232,11 @@ li + li { margin-top: .45em; }
 .related-guides h2 { font-size: 1.45rem; }
 .related-guides ul { padding-inline-start: 1.3rem; }
 .article-head h1 { max-width: 19ch; }
+.article-head .topic-title { max-width: none; }
+.topic-title span { display: inline-block; max-width: 100%; }
+@media (max-width: 460px) {
+  html:lang(ja) .topic-title { font-size: clamp(2rem, 9.5vw, 2.5rem); }
+}
 .article-body { margin-top: clamp(1.35rem, 3.5vw, 2.25rem); }
 .article-body > h2:not(:first-child), .article-body > section:not(:first-child) { margin-top: 2rem; }
 .article-body p > a, .sources a { color: var(--mint); }
