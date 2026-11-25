@@ -1,4 +1,35 @@
 const map = document.querySelector('[data-map-preview]');
+const mapStrings = map.querySelector('[data-map-strings]');
+const copy = mapStrings ? JSON.parse(mapStrings.textContent) : {
+  copy: 'Copy link', copied: 'Copied', cluster: 'Zoom to {n} places', progress: '{visited} / {total} visited',
+  placeOne: '{n} place', placeOther: '{n} places', noMatches: 'No matching places',
+  loadError: 'Places could not load. Reload the page to try again.', hideGroup: 'Hide group', showGroup: 'Show group',
+  expand: 'Expand map', exitExpand: 'Exit expanded map'
+};
+const language = map.lang || 'en-US';
+const numbers = new Intl.NumberFormat(language);
+const plurals = new Intl.PluralRules(language);
+const text = (key, values) => copy[key].replace(/\{(\w+)\}/g, (_, name) => numbers.format(values[name]));
+const placeCount = count => {
+  const plural = plurals.select(count);
+  const key = plural === 'one' ? 'placeOne' : plural === 'few' && copy.placeFew ? 'placeFew' : 'placeOther';
+  return text(key, { n: count });
+};
+
+function redirectMapLanguage() {
+  const url = new URL(location.href);
+  const requested = url.searchParams.get('lang');
+  const supported = ['en', 'it', 'ko', 'ru', 'es-es', 'es', 'pt-br', 'fr', 'ja', 'zh-hans', 'zh-hant', 'de', 'pl', 'tr'];
+  if (!supported.includes(requested)) return false;
+  url.searchParams.delete('lang');
+  if (requested === (map.dataset.mapLocale ?? 'en')) {
+    history.replaceState(history.state, '', url);
+    return false;
+  }
+  url.pathname = requested === 'en' ? '/map/' : '/' + requested + '/map/';
+  location.replace(url);
+  return true;
+}
 const viewport = map.querySelector('.map-viewport');
 const image = map.querySelector('.map-image');
 const raster = image.querySelector('img');
@@ -28,6 +59,7 @@ const zoomLabel = map.querySelector('.map-zoom-level');
 const expand = map.querySelector('[data-map-expand]');
 const filters = [...map.querySelectorAll('[data-category]')];
 const categories = Object.fromEntries(filters.map(button => [button.dataset.category, button.dataset.label]));
+const categorySearch = Object.fromEntries(filters.map(button => [button.dataset.category, button.dataset.search]));
 const spriteColumns = Number(map.dataset.spriteColumns);
 const spriteRows = Number(map.dataset.spriteRows);
 const smallScreen = matchMedia('(max-width: 48rem)');
@@ -376,7 +408,7 @@ function drawMarkers() {
       button.className = 'map-cluster';
       button.dataset.cluster = x + ',' + y;
       button.textContent = group.length;
-      button.setAttribute('aria-label', 'Zoom to ' + group.length + ' places');
+      button.setAttribute('aria-label', text('cluster', { n: group.length }));
       if (focused?.dataset.cluster === button.dataset.cluster) focusedReplacement = button;
     }
     button.style.left = x * 100 + '%';
@@ -417,10 +449,21 @@ function placeUrl(record) {
   return url;
 }
 
+function syncPlaceLanguageLinks(place) {
+  for (const link of document.querySelectorAll('.language-menu a[href]')) {
+    const url = new URL(link.href);
+    if (url.origin !== location.origin || !/^\/(?:[a-z-]+\/)?map\/$/.test(url.pathname)) continue;
+    if (place) url.searchParams.set('place', place);
+    else url.searchParams.delete('place');
+    link.href = url.pathname + url.search + url.hash;
+  }
+}
+
 function showPlace(record) {
   selected = record;
   details.hidden = !record;
   history.replaceState(history.state, '', placeUrl(record));
+  syncPlaceLanguageLinks(record?.id);
   for (const button of list.querySelectorAll('[data-place]')) {
     button.setAttribute('aria-pressed', String(record?.id === button.dataset.place));
   }
@@ -433,7 +476,7 @@ function showPlace(record) {
   details.querySelector('.map-notes').open = false;
   complete.checked = visited.has(record.id);
   note.value = notes.get(record.id) ?? '';
-  share.textContent = 'Copy link';
+  share.textContent = copy.copy;
   shareUrl.hidden = true;
   positionDetails();
 }
@@ -451,8 +494,8 @@ function updateResults({ keepList = false } = {}) {
   }
   if (selected && !results.includes(selected)) showPlace(null);
   if (!keepList) shown = pageSize;
-  status.textContent = results.length === 0 ? 'No matching places' : results.length.toLocaleString('en-US') + (results.length === 1 ? ' place' : ' places');
-  progress.textContent = visited.size + ' / ' + records.length + ' visited';
+  status.textContent = results.length === 0 ? copy.noMatches : placeCount(results.length);
+  progress.textContent = text('progress', { visited: visited.size, total: records.length });
   drawList();
   drawMarkers();
   if (!keepList) map.querySelector('.map-results').scrollTop = 0;
@@ -484,8 +527,8 @@ function drawFilters() {
     const options = [...group.querySelectorAll('[data-category]:not([hidden])')];
     const toggle = group.querySelector('[data-map-group]');
     const any = options.some(button => activeTypes.has(button.dataset.category));
-    toggle.textContent = any ? 'Hide group' : 'Show group';
-    toggle.setAttribute('aria-label', (any ? 'Hide ' : 'Show ') + group.querySelector('h2').textContent);
+    toggle.textContent = any ? copy.hideGroup : copy.showGroup;
+    toggle.setAttribute('aria-label', group.querySelector('h2').textContent + ': ' + toggle.textContent);
     group.querySelector('[data-group-count]').textContent = options.reduce((sum, option) =>
       sum + (activeTypes.has(option.dataset.category) ? Number(option.querySelector('[data-count]').textContent) : 0), 0);
   }
@@ -584,7 +627,7 @@ map.addEventListener('click', async event => {
   } else if (button === expand) {
     const expanded = map.classList.toggle('map-expanded');
     expand.setAttribute('aria-pressed', String(expanded));
-    expand.setAttribute('aria-label', expanded ? 'Exit expanded map' : 'Expand map');
+    expand.setAttribute('aria-label', expanded ? copy.exitExpand : copy.expand);
     document.body.classList.toggle('map-expanded-body', expanded);
   } else if (button.hasAttribute('data-map-close')) {
     showPlace(null);
@@ -595,7 +638,7 @@ map.addEventListener('click', async event => {
     const url = placeUrl(record).href;
     try {
       await navigator.clipboard.writeText(url);
-      if (selected === record) share.textContent = 'Copied';
+      if (selected === record) share.textContent = copy.copied;
     } catch {
       if (selected !== record) return;
       shareUrl.value = url;
@@ -740,7 +783,7 @@ async function loadLandmarks() {
       const countyName = county ? area : '';
       return { id, name, area: countyName, category, icon, x, y, county,
         unconfirmed: name.endsWith('?'),
-        search: normalize([name, countyName, categories[category]].join(' ')), searchName: normalize(name) };
+        search: normalize([name, countyName, categories[category], categorySearch[category]].join(' ')), searchName: normalize(name) };
     });
     byId = new Map(records.map(record => [record.id, record]));
     for (const id of visited) if (!byId.has(id)) visited.delete(id);
@@ -755,10 +798,13 @@ async function loadLandmarks() {
     updateResults();
     if (byId.has(initialPlace)) selectRecord(byId.get(initialPlace), true);
   } catch {
-    status.textContent = 'Places could not load. Reload the page to try again.';
+    status.textContent = copy.loadError;
     query.disabled = true;
     filterPanel.hidden = true;
   }
 }
 
-loadLandmarks();
+if (!redirectMapLanguage()) {
+  syncPlaceLanguageLinks(new URL(location.href).searchParams.get('place'));
+  loadLandmarks();
+}
